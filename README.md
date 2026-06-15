@@ -51,7 +51,7 @@ bundled `tali-agent` skill into detected agent skill directories when possible.
 Useful installer options:
 
 ```sh
-TALI_VERSION=0.1.2 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
+TALI_VERSION=0.1.3 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_INSTALL_SKILL=0 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_SKILL_DIRS="$HOME/.codex/skills:$HOME/.agents/skills" curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
@@ -431,7 +431,7 @@ cargo run -- self-test
 ```
 
 Rust version is 1.85. Maintainer release tags match the Cargo version, for
-example `v0.1.2`.
+example `v0.1.3`.
 
 Release checks:
 

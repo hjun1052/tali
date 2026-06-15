@@ -24,12 +24,12 @@ This checks formatting, MSRV compatibility when Rust 1.85.0 is installed, clippy
 Commit the release changes, then create and push a version tag:
 
 ```sh
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
 The `Release` workflow builds and smoke-tests archives for Linux, macOS Intel, macOS Apple Silicon, and Windows. It uploads the archives, checksum files, installer scripts, bundled `$tali-agent` skill, and GitHub artifact attestations to the GitHub Release.
-The pushed tag must match the version in `Cargo.toml`. For example, `Cargo.toml` version `0.1.2` must be released with tag `v0.1.2`.
+The pushed tag must match the version in `Cargo.toml`. For example, `Cargo.toml` version `0.1.3` must be released with tag `v0.1.3`.
 
 After the workflow completes, verify at least one downloaded archive:
 
@@ -56,7 +56,7 @@ irm https://github.com/OWNER/REPO/releases/latest/download/install.ps1 | iex
 
 Publish the crate after the GitHub Release succeeds.
 
-Use the `Publish crate` GitHub Actions workflow and enter the exact version from `Cargo.toml`, for example `0.1.2`.
+Use the `Publish crate` GitHub Actions workflow and enter the exact version from `Cargo.toml`, for example `0.1.3`.
 
 As a fallback, publish locally:
 
@@ -84,5 +84,5 @@ tali self-test
 - If the release was faulty, yank the crates.io version rather than deleting the GitHub tag:
 
 ```sh
-cargo yank tali --version 0.1.2
+cargo yank tali --version 0.1.3
 ```

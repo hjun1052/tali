@@ -168,16 +168,19 @@ pub fn follow_events(run_dir: &Path) -> Result<()> {
         }
 
         if run_path.exists() {
-            let run = read_run_log(run_dir)?;
-            if run.status != RunStatus::Running {
-                if event_path.exists() {
-                    let len = fs::metadata(&event_path)?.len();
-                    if offset >= len {
+            match read_run_log(run_dir) {
+                Ok(run) if run.status != RunStatus::Running => {
+                    if event_path.exists() {
+                        let len = fs::metadata(&event_path)?.len();
+                        if offset >= len {
+                            break;
+                        }
+                    } else {
                         break;
                     }
-                } else {
-                    break;
                 }
+                Ok(_) => {}
+                Err(_) => {}
             }
         }
 

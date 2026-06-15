@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Hardened `tali logs follow` against a run log write/read race while a run is starting or finishing.
+
 ## 0.1.2
 
 - Added `tali cleanup` for conservative run log and cache cleanup with preview-by-default behavior.
