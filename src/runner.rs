@@ -516,6 +516,61 @@ fn execute_step(step: &Step, index: usize, context: &StepExecutionContext<'_>) -
                 backup_path: backup_path.map(|path| display_path(&path)),
             })
         }
+        Step::ReplaceInFile {
+            name,
+            path,
+            replacements,
+            require_match,
+            expected_matches,
+            ..
+        } => {
+            let path_text = interpolate(path, context.values)?;
+            let target = safe_path(
+                &context.source.project_root,
+                &path_text,
+                context.source.manifest.allow_outside_cwd,
+            )?;
+            let original = fs::read_to_string(&target)
+                .with_context(|| format!("failed to read {}", target.display()))?;
+            let (rendered, match_count) = replace_content(&original, replacements, context.values)?;
+            if *require_match && match_count == 0 {
+                bail!(
+                    "no replacement placeholders matched in {}",
+                    target.display()
+                );
+            }
+            if let Some(expected_matches) = expected_matches {
+                if match_count != *expected_matches {
+                    bail!(
+                        "expected {expected_matches} replacement matches in {}, found {match_count}",
+                        target.display()
+                    );
+                }
+            }
+            let backup_path = if match_count > 0 {
+                let backup_path = backup_existing(&target, context.run_dir, index)?;
+                fs::write(&target, rendered)?;
+                backup_path
+            } else {
+                None
+            };
+            Ok(StepLog {
+                index,
+                name: name.clone(),
+                step_type: "replace_in_file".to_string(),
+                started_at,
+                ended_at: Some(Utc::now()),
+                status: StepStatus::Success,
+                command: None,
+                path: Some(mask_secrets(&display_path(&target), context.secrets)),
+                when: step.when().map(|when| mask_secrets(when, context.secrets)),
+                skip_reason: None,
+                exit_code: None,
+                stdout_snippet: Some(format!("Replacements applied: {match_count}")),
+                stderr_snippet: None,
+                backup_path: backup_path.map(|path| display_path(&path)),
+            })
+        }
     }
 }
 
@@ -678,6 +733,49 @@ fn interpolate_env(
         .collect()
 }
 
+fn replace_content(
+    original: &str,
+    replacements: &BTreeMap<String, String>,
+    values: &HashMap<String, String>,
+) -> Result<(String, usize)> {
+    let replacements = replacements
+        .iter()
+        .map(|(placeholder, replacement)| {
+            Ok((
+                placeholder.as_str(),
+                interpolate(replacement, values)?,
+                placeholder.chars().count(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut rendered = String::with_capacity(original.len());
+    let mut match_count = 0;
+
+    let chars = original.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let remaining = chars[index..].iter().collect::<String>();
+        let mut matched: Option<(&str, usize)> = None;
+        for (placeholder, replacement, char_len) in &replacements {
+            if remaining.starts_with(*placeholder) {
+                match matched {
+                    Some((_, best_len)) if best_len >= *char_len => {}
+                    _ => matched = Some((replacement.as_str(), *char_len)),
+                }
+            }
+        }
+        if let Some((replacement, char_len)) = matched {
+            rendered.push_str(replacement);
+            match_count += 1;
+            index += char_len;
+        } else {
+            rendered.push(chars[index]);
+            index += 1;
+        }
+    }
+    Ok((rendered, match_count))
+}
+
 fn confirm() -> Result<bool> {
     print!("Okay to proceed? [y/N] ");
     io::stdout().flush()?;
@@ -735,7 +833,9 @@ fn file_path_for_log(
     secrets: &[String],
 ) -> Option<String> {
     let raw = match step {
-        Step::WriteFile { path, .. } | Step::Mkdir { path, .. } => path,
+        Step::WriteFile { path, .. }
+        | Step::Mkdir { path, .. }
+        | Step::ReplaceInFile { path, .. } => path,
         Step::Copy { to, .. } => to,
         Step::Shell { .. } => return None,
     };
@@ -1131,5 +1231,141 @@ content = "new"
             fs::read_to_string(temp.path().join("existing.txt")).unwrap(),
             "new"
         );
+    }
+
+    #[test]
+    fn replaces_placeholders_in_existing_file_and_masks_secret_logs() {
+        let temp = tempdir().unwrap();
+        let store = Store::from_data_dir(temp.path().join("store")).unwrap();
+        fs::write(
+            temp.path().join(".env"),
+            "OPENAI_API_KEY=__OPENAI_API_KEY__\nAPP_NAME=__APP_NAME__\n",
+        )
+        .unwrap();
+        let manifest_path = temp.path().join("replace.toml");
+        fs::write(
+            &manifest_path,
+            r#"
+version = 1
+name = "replace-test"
+
+[[inputs]]
+name = "openai_key"
+prompt = "OpenAI key"
+secret = true
+required = true
+
+[[inputs]]
+name = "app_name"
+prompt = "App name"
+required = true
+
+[[steps]]
+name = "Fill env"
+type = "replace_in_file"
+path = ".env"
+expected_matches = 2
+
+[steps.replacements]
+"__OPENAI_API_KEY__" = "{{openai_key}}"
+"__APP_NAME__" = "{{app_name}}"
+"#,
+        )
+        .unwrap();
+
+        let entry = store.add_manifest(&manifest_path).unwrap();
+        let source = store.resolve_manifest(&entry.id, temp.path()).unwrap();
+        let result = run_manifest(
+            &store,
+            &source,
+            RunnerOptions {
+                yes: true,
+                dry_run: false,
+                provided_inputs: HashMap::from([
+                    ("openai_key".to_string(), "sk-secret-value".to_string()),
+                    ("app_name".to_string(), "demo".to_string()),
+                ]),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.status, RunStatus::Success);
+        assert_eq!(
+            fs::read_to_string(temp.path().join(".env")).unwrap(),
+            "OPENAI_API_KEY=sk-secret-value\nAPP_NAME=demo\n"
+        );
+        let run_dir = result.run_dir.unwrap();
+        let run = logs::read_run_log(&run_dir).unwrap();
+        assert_eq!(
+            run.steps[0].stdout_snippet.as_deref(),
+            Some("Replacements applied: 2")
+        );
+        let backup_path = run.steps[0].backup_path.as_ref().unwrap();
+        assert_eq!(
+            fs::read_to_string(backup_path).unwrap(),
+            "OPENAI_API_KEY=__OPENAI_API_KEY__\nAPP_NAME=__APP_NAME__\n"
+        );
+        let run_json = fs::read_to_string(run_dir.join("run.json")).unwrap();
+        let stdout = fs::read_to_string(run_dir.join("stdout.log")).unwrap();
+        let stderr = fs::read_to_string(run_dir.join("stderr.log")).unwrap();
+        assert!(!run_json.contains("sk-secret-value"));
+        assert!(!stdout.contains("sk-secret-value"));
+        assert!(!stderr.contains("sk-secret-value"));
+    }
+
+    #[test]
+    fn replace_in_file_fails_when_required_placeholder_is_missing() {
+        let temp = tempdir().unwrap();
+        let store = Store::from_data_dir(temp.path().join("store")).unwrap();
+        fs::write(temp.path().join(".env"), "APP_NAME=demo\n").unwrap();
+        let manifest_path = temp.path().join("replace-missing.toml");
+        fs::write(
+            &manifest_path,
+            r#"
+version = 1
+name = "replace-missing-test"
+
+[[steps]]
+type = "replace_in_file"
+path = ".env"
+
+[steps.replacements]
+"__TOKEN__" = "value"
+"#,
+        )
+        .unwrap();
+
+        let entry = store.add_manifest(&manifest_path).unwrap();
+        let source = store.resolve_manifest(&entry.id, temp.path()).unwrap();
+        let result = run_manifest(
+            &store,
+            &source,
+            RunnerOptions {
+                yes: true,
+                dry_run: false,
+                provided_inputs: HashMap::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.status, RunStatus::Failed);
+        assert_eq!(
+            fs::read_to_string(temp.path().join(".env")).unwrap(),
+            "APP_NAME=demo\n"
+        );
+    }
+
+    #[test]
+    fn replace_in_file_does_not_cascade_inserted_placeholder_text() {
+        let replacements = BTreeMap::from([
+            ("__A__".to_string(), "__B__".to_string()),
+            ("__B__".to_string(), "final".to_string()),
+        ]);
+
+        let (rendered, count) =
+            replace_content("__A__ __B__", &replacements, &HashMap::new()).unwrap();
+
+        assert_eq!(rendered, "__B__ final");
+        assert_eq!(count, 2);
     }
 }

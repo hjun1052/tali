@@ -31,7 +31,7 @@ Prefer a Tali manifest over prose instructions when the user would otherwise nee
 
 - Never guess secret destinations. Secrets are inputs that the manifest interpolates where the plan needs them.
 - Keep shell commands boring and explicit. Avoid hidden multi-command scripts when separate steps produce better logs.
-- Prefer `write_file`, `copy`, and `mkdir` over shell when the intent is file manipulation.
+- Prefer `write_file`, `replace_in_file`, `copy`, and `mkdir` over shell when the intent is file manipulation.
 - Use `when` for conditional steps. Model else behavior with complementary `when` conditions.
 - Keep `allow_outside_cwd = false` unless the task truly requires external paths and the plan clearly states that risk.
 - Make steps idempotent where practical. Use `overwrite = false` when preserving a user file matters.

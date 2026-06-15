@@ -78,6 +78,19 @@ pub enum Step {
         #[serde(default)]
         overwrite: bool,
     },
+    #[serde(rename = "replace_in_file")]
+    ReplaceInFile {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        when: Option<String>,
+        path: String,
+        replacements: BTreeMap<String, String>,
+        #[serde(default = "default_true")]
+        require_match: bool,
+        #[serde(default)]
+        expected_matches: Option<usize>,
+    },
 }
 
 fn default_true() -> bool {
@@ -136,7 +149,8 @@ impl Step {
             Step::Shell { name, .. }
             | Step::WriteFile { name, .. }
             | Step::Mkdir { name, .. }
-            | Step::Copy { name, .. } => name.as_deref(),
+            | Step::Copy { name, .. }
+            | Step::ReplaceInFile { name, .. } => name.as_deref(),
         }
     }
 
@@ -145,7 +159,8 @@ impl Step {
             Step::Shell { when, .. }
             | Step::WriteFile { when, .. }
             | Step::Mkdir { when, .. }
-            | Step::Copy { when, .. } => when.as_deref(),
+            | Step::Copy { when, .. }
+            | Step::ReplaceInFile { when, .. } => when.as_deref(),
         }
     }
 
@@ -155,6 +170,7 @@ impl Step {
             Step::WriteFile { .. } => "write_file",
             Step::Mkdir { .. } => "mkdir",
             Step::Copy { .. } => "copy",
+            Step::ReplaceInFile { .. } => "replace_in_file",
         }
     }
 
@@ -164,6 +180,7 @@ impl Step {
             Step::WriteFile { path, .. } => format!("Write file: {path}"),
             Step::Mkdir { path, .. } => format!("Create directory: {path}"),
             Step::Copy { from, to, .. } => format!("Copy: {from} -> {to}"),
+            Step::ReplaceInFile { path, .. } => format!("Replace in file: {path}"),
         }
     }
 
@@ -176,7 +193,9 @@ impl Step {
 
     pub fn path_for_inspect(&self) -> Option<&str> {
         match self {
-            Step::WriteFile { path, .. } | Step::Mkdir { path, .. } => Some(path),
+            Step::WriteFile { path, .. }
+            | Step::Mkdir { path, .. }
+            | Step::ReplaceInFile { path, .. } => Some(path),
             Step::Copy { to, .. } => Some(to),
             Step::Shell { .. } => None,
         }
@@ -195,6 +214,18 @@ impl Step {
             }
             Step::Copy { from, to, .. } if from.trim().is_empty() || to.trim().is_empty() => {
                 bail!("step {index} copy from and to are required")
+            }
+            Step::ReplaceInFile {
+                path, replacements, ..
+            } if path.trim().is_empty() || replacements.is_empty() => {
+                bail!("step {index} replace_in_file path and replacements are required")
+            }
+            Step::ReplaceInFile { replacements, .. }
+                if replacements
+                    .keys()
+                    .any(|placeholder| placeholder.is_empty()) =>
+            {
+                bail!("step {index} replace_in_file replacement keys cannot be empty")
             }
             _ => {
                 if let Some(when) = self.when() {
@@ -253,6 +284,35 @@ cmd = "npm install"
             Some("os_is('linux') || os_is('macos')")
         );
         assert!(matches!(manifest.steps[0], Step::Shell { .. }));
+    }
+
+    #[test]
+    fn parses_replace_in_file_step() {
+        let manifest = Manifest::from_toml(
+            r##"
+version = 1
+name = "replace-test"
+
+[[steps]]
+name = "Fill placeholder"
+type = "replace_in_file"
+path = ".env"
+expected_matches = 1
+
+[steps.replacements]
+"__TOKEN__" = "{{token}}"
+"#NAME#" = "demo"
+"##,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            manifest.steps[0],
+            Step::ReplaceInFile {
+                expected_matches: Some(1),
+                ..
+            }
+        ));
     }
 
     #[test]

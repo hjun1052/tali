@@ -80,6 +80,25 @@ to = ".env"
 overwrite = false
 ```
 
+Use `replace_in_file` for existing placeholder files:
+
+```toml
+[[steps]]
+name = "Fill env placeholders"
+type = "replace_in_file"
+path = ".env"
+expected_matches = 2
+
+[steps.replacements]
+"__API_KEY__" = "{{api_key}}"
+"__APP_NAME__" = "{{app_name}}"
+```
+
+`replace_in_file` replaces all occurrences of each placeholder, saves a backup
+before writing, and logs only the replacement count. It does not log rendered
+file contents. `require_match` defaults to `true`; use `expected_matches` when
+the exact number of replacements matters.
+
 ## Conditional Steps
 
 Every step can include `when`. False conditions are logged as skipped.
@@ -123,7 +142,7 @@ Before adding or running a manifest:
 - Confirm the manifest name is stable and descriptive.
 - Confirm every secret is an input with `secret = true`.
 - Confirm secret values are not hardcoded in `cmd`, `content`, paths, or env values.
-- Confirm write/copy/mkdir paths are project-relative unless `allow_outside_cwd = true` is deliberately needed.
+- Confirm write/copy/replace/mkdir paths are project-relative unless `allow_outside_cwd = true` is deliberately needed.
 - Confirm dangerous shell commands are visible as separate reviewed steps.
 - Confirm outputs needed by future repair are captured by normal stdout/stderr.
 - Prefer project-local `.tali/<name>.toml` for repeatable repository workflows.

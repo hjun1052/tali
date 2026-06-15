@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Added `tali cleanup` for conservative run log and cache cleanup with preview-by-default behavior.
+- Added `replace_in_file` steps for filling existing placeholders without logging rendered secret content.
+- Documented cleanup, replacement steps, and a clearer first-run project story in the README.
+- Updated the bundled `tali-agent` skill guidance so agents prefer native file steps for placeholder replacement.
+
 ## 0.1.1
 
 - Added `tali update` for installer-based self updates.

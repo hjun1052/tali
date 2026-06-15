@@ -42,6 +42,40 @@ fn wait_for_path(path: &Path) {
     panic!("timed out waiting for {}", path.display());
 }
 
+fn write_run_json(data_dir: &Path, run_id: &str, timestamp: &str) {
+    let run_dir = data_dir.join("runs").join(run_id);
+    fs::create_dir_all(&run_dir).unwrap();
+    let run = serde_json::json!({
+        "run_id": run_id,
+        "manifest_id": null,
+        "manifest_name": "cleanup-test",
+        "total_steps": 0,
+        "started_at": timestamp,
+        "ended_at": timestamp,
+        "status": "success",
+        "platform": {
+            "os": "test",
+            "architecture": "test",
+            "current_directory": "/tmp",
+            "shell": null,
+            "path": null,
+            "tali_version": env!("CARGO_PKG_VERSION"),
+            "rustc_version": null,
+            "tools": {}
+        },
+        "steps": [],
+        "failed_step_index": null,
+        "stdout_log": "",
+        "stderr_log": "",
+        "events_log": ""
+    });
+    fs::write(
+        run_dir.join("run.json"),
+        serde_json::to_string_pretty(&run).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
 fn add_shortcut_run_and_ai_logs_mask_secrets() {
     let temp = tempdir().unwrap();
@@ -340,6 +374,46 @@ content = "ok"
 }
 
 #[test]
+fn inspect_shows_replace_in_file_as_writable_file() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let manifest = temp.path().join("replace.toml");
+    fs::write(
+        &manifest,
+        r#"
+version = 1
+name = "cli-replace"
+
+[[steps]]
+name = "Fill env"
+type = "replace_in_file"
+path = ".env"
+
+[steps.replacements]
+"__TOKEN__" = "value"
+"#,
+    )
+    .unwrap();
+
+    let add = run_tali(&["add", manifest.to_str().unwrap()], &data_dir, temp.path());
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let inspect = run_tali(&["inspect", "01"], &data_dir, temp.path());
+    assert!(
+        inspect.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("Replace in file: .env"));
+    assert!(stdout.contains("- .env"));
+}
+
+#[test]
 fn logs_follow_latest_streams_live_events() {
     let temp = tempdir().unwrap();
     let data_dir = temp.path().join("store");
@@ -396,6 +470,55 @@ cmd = "{}"
     assert!(follow_stdout.contains("\"text\":\"one\""));
     assert!(follow_stdout.contains("\"text\":\"two\""));
     assert!(follow_stdout.contains("\"type\":\"run_finished\""));
+}
+
+#[test]
+fn cleanup_previews_then_deletes_old_runs_and_cache() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    fs::create_dir_all(data_dir.join("runs")).unwrap();
+    fs::create_dir_all(data_dir.join("logs")).unwrap();
+    fs::create_dir_all(data_dir.join("cache")).unwrap();
+    write_run_json(&data_dir, "run-old", "2000-01-01T00:00:00Z");
+    write_run_json(&data_dir, "run-new", "2999-01-01T00:00:00Z");
+    fs::write(data_dir.join("logs").join("latest"), "run-old").unwrap();
+    fs::write(data_dir.join("cache").join("old-cache.txt"), "cache").unwrap();
+
+    let preview = run_tali(
+        &["cleanup", "--older-than", "0s", "--json"],
+        &data_dir,
+        temp.path(),
+    );
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview_json: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview_json["deleted"], false);
+    assert_eq!(preview_json["dry_run"], true);
+    assert!(data_dir.join("runs").join("run-old").exists());
+    assert!(data_dir.join("cache").join("old-cache.txt").exists());
+
+    let cleanup = run_tali(
+        &["cleanup", "--older-than", "0s", "--yes", "--json"],
+        &data_dir,
+        temp.path(),
+    );
+    assert!(
+        cleanup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cleanup.stderr)
+    );
+    let cleanup_json: Value = serde_json::from_slice(&cleanup.stdout).unwrap();
+    assert_eq!(cleanup_json["deleted"], true);
+    assert!(!data_dir.join("runs").join("run-old").exists());
+    assert!(data_dir.join("runs").join("run-new").exists());
+    assert!(!data_dir.join("cache").join("old-cache.txt").exists());
+    assert_eq!(
+        fs::read_to_string(data_dir.join("logs").join("latest")).unwrap(),
+        "run-new"
+    );
 }
 
 #[test]

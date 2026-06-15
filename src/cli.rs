@@ -1,3 +1,4 @@
+use crate::cleanup::{self, CleanupOptions};
 use crate::doctor;
 use crate::logs;
 use crate::runner::{self, RunnerOptions};
@@ -72,6 +73,21 @@ enum Commands {
     },
     /// Capture environment and common tool information.
     Doctor {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview or delete old run logs and cache entries.
+    Cleanup {
+        /// Delete entries older than this age, such as 30d, 12h, 15m, or 60s.
+        #[arg(long, default_value = "30d")]
+        older_than: String,
+        /// Preview what would be deleted without deleting anything.
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
+        /// Actually delete the listed entries.
+        #[arg(long)]
+        yes: bool,
         /// Print machine-readable JSON.
         #[arg(long)]
         json: bool,
@@ -249,6 +265,27 @@ pub fn run() -> Result<()> {
                 doctor::print_doctor(&info);
             }
         }
+        Commands::Cleanup {
+            older_than,
+            dry_run,
+            yes,
+            json,
+        } => {
+            let store = Store::new()?;
+            let report = cleanup::cleanup(
+                &store,
+                CleanupOptions {
+                    older_than,
+                    dry_run,
+                    yes,
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                cleanup::print_report(&report);
+            }
+        }
         Commands::SelfTest { json } => {
             let store = Store::new()?;
             let report = self_test::run(&store);
@@ -362,6 +399,7 @@ fn rewrite_shortcut_args(args: Vec<String>) -> Vec<String> {
         "inspect",
         "logs",
         "doctor",
+        "cleanup",
         "self-test",
         "update",
         "skill",

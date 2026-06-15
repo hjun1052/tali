@@ -1,3 +1,4 @@
+mod cleanup;
 mod cli;
 mod condition;
 mod doctor;
