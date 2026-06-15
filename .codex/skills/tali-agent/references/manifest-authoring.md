@@ -145,7 +145,8 @@ Before adding or running a manifest:
 - Confirm write/copy/replace/mkdir paths are project-relative unless `allow_outside_cwd = true` is deliberately needed.
 - Confirm dangerous shell commands are visible as separate reviewed steps.
 - Confirm outputs needed by future repair are captured by normal stdout/stderr.
-- Prefer project-local `.tali/<name>.toml` for repeatable repository workflows.
+- Prefer project-local `.tali/<name>.toml` for private or local repository workflows.
+- Use `.tali/share/<name>.toml` only when the manifest is intended to be committed and shared with the project.
 - Prefer `tali add <path>` for temporary or one-off global handoffs.
 
 ## Handoff Patterns
@@ -176,3 +177,15 @@ Then tell the user:
 ```sh
 tali setup
 ```
+
+For a shared project manifest:
+
+```sh
+mkdir -p .tali/share
+# write .tali/share/setup.toml
+tali inspect setup
+```
+
+Tali resolves `.tali/setup.toml` first, then `.tali/share/setup.toml`.
+Treat `.tali/` as private by default and `.tali/share/` as explicit opt-in
+sharing.

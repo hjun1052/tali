@@ -17,7 +17,8 @@ If the user asks for a "single command", "one-line handoff", "don't give me comm
 
 1. Determine the exact working directory, commands, files, inputs, and safety boundaries.
 2. Write a TOML manifest:
-   - Use project-local `.tali/<name>.toml` for reusable project tasks.
+   - Use project-local `.tali/<name>.toml` for private/local project handoffs.
+   - Use project-local `.tali/share/<name>.toml` only when the manifest is meant to be committed and shared.
    - Use a temporary workspace manifest plus `tali add <path>` for one-off global tasks.
 3. Register or validate before handoff:
    - For global one-off tasks, run `tali add <path> --json` yourself and parse the returned `run` command.
@@ -40,6 +41,8 @@ If the user asks for a "single command", "one-line handoff", "don't give me comm
 - Give every nontrivial step a clear `name`.
 - For long-running or failure-prone work, split steps so repair logs identify the failing operation.
 - When a global manifest is appropriate, the agent should perform registration with `tali add --json`; the user should normally only see `tali 03`.
+- Treat `.tali/` as private by default. Do not ask the user to commit `.tali/<name>.toml`; use `.tali/share/<name>.toml` for explicit shared manifests.
+- Do not silently edit `.gitignore`. Tali may offer a post-run `.gitignore` safety prompt for private project manifests.
 
 ## Live Observation
 

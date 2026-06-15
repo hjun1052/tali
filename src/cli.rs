@@ -5,12 +5,13 @@ use crate::runner::{self, RunnerOptions};
 use crate::self_test;
 use crate::skill;
 use crate::store::Store;
+use crate::{gitignore, update_check};
 use anyhow::{bail, Context, Result};
 use clap::{Command, CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use std::collections::HashMap;
 use std::env;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Stdio;
 
@@ -49,6 +50,9 @@ enum Commands {
         /// Provide an input from an environment variable as key=ENV_VAR. Repeatable.
         #[arg(long = "input-env", value_name = "KEY=ENV_VAR")]
         input_envs: Vec<String>,
+        /// Skip the passive update check after this run.
+        #[arg(long)]
+        no_update_check: bool,
     },
     /// Inspect a manifest without executing it.
     Inspect {
@@ -100,6 +104,9 @@ enum Commands {
     },
     /// Update Tali by re-running the GitHub Release installer.
     Update {
+        /// Check whether a newer version is available without installing it.
+        #[arg(long)]
+        check: bool,
         /// Install a specific version such as 0.1.1 or v0.1.1.
         #[arg(long)]
         version: Option<String>,
@@ -195,6 +202,7 @@ pub fn run() -> Result<()> {
             yes,
             inputs,
             input_envs,
+            no_update_check,
         } => {
             let store = Store::new()?;
             let source = store.resolve_manifest(&id_or_name, &cwd)?;
@@ -207,6 +215,17 @@ pub fn run() -> Result<()> {
                     provided_inputs: parse_inputs(&inputs, &input_envs)?,
                 },
             )?;
+            if !dry_run && result.status == crate::logs::RunStatus::Success {
+                let action = if yes || !io::stdin().is_terminal() {
+                    gitignore::GitignoreAction::NoticeOnly
+                } else {
+                    gitignore::GitignoreAction::Prompt
+                };
+                let _ = gitignore::maybe_offer_gitignore_protection(&store, &source, action);
+                if !no_update_check {
+                    update_check::maybe_check_and_print(&store);
+                }
+            }
             if matches!(
                 result.status,
                 crate::logs::RunStatus::Failed | crate::logs::RunStatus::Aborted
@@ -263,6 +282,8 @@ pub fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&info)?);
             } else {
                 doctor::print_doctor(&info);
+                let store = Store::new()?;
+                update_check::maybe_check_and_print(&store);
             }
         }
         Commands::Cleanup {
@@ -293,18 +314,28 @@ pub fn run() -> Result<()> {
                 self_test::print_json(&report)?;
             } else {
                 self_test::print_report(&report);
+                update_check::maybe_check_and_print(&store);
             }
             if report.status == self_test::SelfTestStatus::Failed {
                 std::process::exit(1);
             }
         }
         Commands::Update {
+            check,
             version,
             repo,
             base_url,
             install_dir,
             no_skill,
-        } => run_update(version, repo, base_url, install_dir, no_skill)?,
+        } => {
+            if check {
+                let store = Store::new()?;
+                let status = update_check::check_now(&store)?;
+                update_check::print_manual_status(&status);
+            } else {
+                run_update(version, repo, base_url, install_dir, no_skill)?;
+            }
+        }
         Commands::Skill { command } => match command {
             SkillCommands::Install {
                 directory,

@@ -259,9 +259,15 @@ fn sanitize_filename(name: &str) -> String {
 
 fn find_project_manifest(cwd: &Path, selector: &str) -> Option<(PathBuf, PathBuf)> {
     for dir in cwd.ancestors() {
-        let manifest = dir.join(".tali").join(format!("{selector}.toml"));
-        if manifest.exists() {
-            return Some((dir.to_path_buf(), manifest));
+        for manifest in [
+            dir.join(".tali").join(format!("{selector}.toml")),
+            dir.join(".tali")
+                .join("share")
+                .join(format!("{selector}.toml")),
+        ] {
+            if manifest.exists() {
+                return Some((dir.to_path_buf(), manifest));
+            }
         }
     }
     None
@@ -329,6 +335,74 @@ path = "config"
         let source = store.resolve_manifest("setup", &child).unwrap();
         assert_eq!(source.manifest.name, "project-setup");
         assert_eq!(source.project_root, project);
+    }
+
+    #[test]
+    fn resolves_shared_project_manifest_when_private_manifest_is_absent() {
+        let temp = tempdir().unwrap();
+        let store = Store::from_data_dir(temp.path().join("store")).unwrap();
+        let project = temp.path().join("project");
+        let child = project.join("nested");
+        fs::create_dir_all(project.join(".tali").join("share")).unwrap();
+        fs::create_dir_all(&child).unwrap();
+        fs::write(
+            project.join(".tali").join("share").join("setup.toml"),
+            r#"
+version = 1
+name = "shared-setup"
+
+[[steps]]
+type = "mkdir"
+path = "config"
+"#,
+        )
+        .unwrap();
+
+        let source = store.resolve_manifest("setup", &child).unwrap();
+
+        assert_eq!(source.manifest.name, "shared-setup");
+        assert_eq!(
+            source.path,
+            project.join(".tali").join("share").join("setup.toml")
+        );
+        assert_eq!(source.project_root, project);
+    }
+
+    #[test]
+    fn private_project_manifest_takes_precedence_over_shared_manifest() {
+        let temp = tempdir().unwrap();
+        let store = Store::from_data_dir(temp.path().join("store")).unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(project.join(".tali").join("share")).unwrap();
+        fs::write(
+            project.join(".tali").join("setup.toml"),
+            r#"
+version = 1
+name = "private-setup"
+
+[[steps]]
+type = "mkdir"
+path = "private"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join(".tali").join("share").join("setup.toml"),
+            r#"
+version = 1
+name = "shared-setup"
+
+[[steps]]
+type = "mkdir"
+path = "shared"
+"#,
+        )
+        .unwrap();
+
+        let source = store.resolve_manifest("setup", &project).unwrap();
+
+        assert_eq!(source.manifest.name, "private-setup");
+        assert_eq!(source.path, project.join(".tali").join("setup.toml"));
     }
 
     #[test]

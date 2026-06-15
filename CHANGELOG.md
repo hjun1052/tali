@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Added `.tali/share/<name>.toml` resolution for explicit shared project manifests.
+- Added post-run `.gitignore` safety notices for private `.tali/` project manifests.
+- Added `tali update --check`, passive cached update notices, and `--no-update-check`.
+
 ## 0.1.4
 
 - Improved the bundled `tali-agent` skill so Codex is more likely to choose Tali for one-command setup/install/deploy handoffs instead of generating shell scripts or long command lists.

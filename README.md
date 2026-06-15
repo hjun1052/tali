@@ -51,7 +51,7 @@ bundled `tali-agent` skill into detected agent skill directories when possible.
 Useful installer options:
 
 ```sh
-TALI_VERSION=0.1.4 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
+TALI_VERSION=0.1.5 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_INSTALL_SKILL=0 curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
 TALI_SKILL_DIRS="$HOME/.codex/skills:$HOME/.agents/skills" curl -fsSL https://github.com/hjun1052/tali/releases/latest/download/install.sh | sh
@@ -303,6 +303,7 @@ tali <id-or-name>
 tali inspect <id-or-name>
 tali run <id-or-name> --dry-run
 tali run <id-or-name> --yes
+tali run <id-or-name> --no-update-check
 tali run <id-or-name> --input key=value
 tali run <id-or-name> --input-env secret_name=ENV_VAR
 tali logs latest
@@ -315,6 +316,7 @@ tali cleanup --older-than 30d
 tali cleanup --older-than 30d --yes
 tali skill install <skill-dir>
 tali skill install <skill-dir> --no-overwrite
+tali update --check
 tali update
 tali doctor
 tali self-test
@@ -356,14 +358,17 @@ Supported ages: `60s`, `15m`, `12h`, `30d`.
 ## Project Manifests
 
 Global manifests are temporary or semi-temporary handoffs created by agents.
-Project manifests are shareable project assets:
+Project manifests can be private local conveniences or explicit shared project
+assets:
 
 ```text
 project/
 └─ .tali/
    ├─ setup.toml
    ├─ build.toml
-   └─ deploy.toml
+   ├─ deploy.toml
+   └─ share/
+      └─ ci.toml
 ```
 
 Run them by name:
@@ -372,6 +377,47 @@ Run them by name:
 tali setup
 tali build
 tali deploy
+```
+
+Private project manifests live directly under `.tali/`. Because those files can
+contain local paths or workflow details, Tali checks after a project-local run
+whether `.tali/` is ignored by git. If it is not ignored, interactive runs ask
+before adding this recommended block:
+
+```gitignore
+# Tali private manifests and runtime files
+.tali/
+!.tali/share/
+!.tali/share/*.toml
+```
+
+Runs with `--yes` or non-interactive stdin never modify `.gitignore`
+automatically; they print the suggested block instead. If you want a manifest
+to be committed and shared, put it under `.tali/share/<name>.toml`. `tali
+<name>` resolves `.tali/<name>.toml` first, then `.tali/share/<name>.toml`,
+then global manifests.
+
+## Updates
+
+Check manually:
+
+```sh
+tali update --check
+```
+
+Update in place:
+
+```sh
+tali update
+```
+
+After `tali run`, `tali doctor`, and `tali self-test`, Tali may perform a
+passive update check at most once every 24 hours. Network failures are ignored
+and never change the command result. Disable passive checks with:
+
+```sh
+tali run setup --no-update-check
+TALI_NO_UPDATE_CHECK=1 tali run setup
 ```
 
 ## Storage
@@ -413,6 +459,7 @@ It does provide practical guardrails:
 
 - The plan is shown before execution.
 - Approval is required unless `--yes` is passed.
+- `--yes` approves the manifest run, not repository policy changes such as editing `.gitignore`.
 - Secret inputs use hidden prompts.
 - Secret values are masked in commands, env values, stdout, stderr, live events, and JSON logs.
 - File operations cannot escape the working directory by default.
@@ -431,7 +478,7 @@ cargo run -- self-test
 ```
 
 Rust version is 1.85. Maintainer release tags match the Cargo version, for
-example `v0.1.4`.
+example `v0.1.5`.
 
 Release checks:
 

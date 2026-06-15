@@ -14,12 +14,31 @@ fn run_tali(args: &[&str], data_dir: &Path, cwd: &Path) -> Output {
     tali()
         .args(args)
         .env("TALI_DATA_DIR", data_dir)
+        .env("TALI_NO_UPDATE_CHECK", "1")
         .current_dir(cwd)
         .output()
         .expect("failed to run tali")
 }
 
 fn run_tali_with_env(args: &[&str], data_dir: &Path, cwd: &Path, env: &[(&str, &str)]) -> Output {
+    let mut command = tali();
+    command
+        .args(args)
+        .env("TALI_DATA_DIR", data_dir)
+        .env("TALI_NO_UPDATE_CHECK", "1")
+        .current_dir(cwd);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.output().expect("failed to run tali")
+}
+
+fn run_tali_allowing_update_check(
+    args: &[&str],
+    data_dir: &Path,
+    cwd: &Path,
+    env: &[(&str, &str)],
+) -> Output {
     let mut command = tali();
     command
         .args(args)
@@ -260,6 +279,108 @@ content = "ok"
 }
 
 #[test]
+fn shared_project_manifest_resolves_from_nested_directory() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let project = temp.path().join("project");
+    let nested = project.join("a").join("b");
+    fs::create_dir_all(project.join(".tali").join("share")).unwrap();
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(
+        project.join(".tali").join("share").join("setup.toml"),
+        r#"
+version = 1
+name = "shared-project-setup"
+
+[[steps]]
+type = "write_file"
+path = "shared-root.txt"
+content = "shared"
+"#,
+    )
+    .unwrap();
+
+    let run = run_tali(&["setup", "--yes"], &data_dir, &nested);
+
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("shared-root.txt")).unwrap(),
+        "shared"
+    );
+}
+
+#[test]
+fn private_project_manifest_warns_when_tali_is_not_ignored_but_does_not_modify_with_yes() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir_all(project.join(".tali")).unwrap();
+    fs::write(
+        project.join(".tali").join("setup.toml"),
+        r#"
+version = 1
+name = "private-project-setup"
+
+[[steps]]
+type = "write_file"
+path = "out.txt"
+content = "ok"
+"#,
+    )
+    .unwrap();
+
+    let run = run_tali(&["setup", "--yes"], &data_dir, &project);
+
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("is not ignored by git"));
+    assert!(stdout.contains(".tali/share/*.toml"));
+    assert!(!project.join(".gitignore").exists());
+}
+
+#[test]
+fn private_project_manifest_is_quiet_when_tali_is_already_ignored() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir_all(project.join(".tali")).unwrap();
+    fs::write(project.join(".gitignore"), ".tali/\n").unwrap();
+    fs::write(
+        project.join(".tali").join("setup.toml"),
+        r#"
+version = 1
+name = "ignored-project-setup"
+
+[[steps]]
+type = "write_file"
+path = "out.txt"
+content = "ok"
+"#,
+    )
+    .unwrap();
+
+    let run = run_tali(&["setup", "--yes"], &data_dir, &project);
+
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(!stdout.contains("is not ignored by git"));
+}
+
+#[test]
 fn failed_run_returns_non_zero_and_records_failure() {
     let temp = tempdir().unwrap();
     let data_dir = temp.path().join("store");
@@ -450,6 +571,7 @@ cmd = "{}"
     let mut run = tali()
         .args(["01", "--yes"])
         .env("TALI_DATA_DIR", &data_dir)
+        .env("TALI_NO_UPDATE_CHECK", "1")
         .current_dir(temp.path())
         .spawn()
         .expect("failed to spawn tali run");
@@ -559,6 +681,111 @@ fn doctor_json_and_self_test_work() {
     let self_test_json: Value = serde_json::from_slice(&self_test.stdout).unwrap();
     assert_eq!(self_test_json["status"], "passed");
     assert!(self_test_json["checks"].as_array().unwrap().len() >= 5);
+}
+
+#[test]
+fn update_check_reports_available_version_and_writes_cache() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+
+    let output = run_tali_allowing_update_check(
+        &["update", "--check"],
+        &data_dir,
+        temp.path(),
+        &[("TALI_UPDATE_CHECK_LATEST_VERSION", "9.9.9")],
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Update available: tali 9.9.9"));
+    let cache = fs::read_to_string(data_dir.join("cache").join("update-check.json")).unwrap();
+    assert!(cache.contains("9.9.9"));
+}
+
+#[test]
+fn passive_update_check_can_be_disabled_for_run() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let manifest = temp.path().join("setup.toml");
+    fs::write(
+        &manifest,
+        r#"
+version = 1
+name = "update-disabled"
+
+[[steps]]
+type = "write_file"
+path = "out.txt"
+content = "ok"
+"#,
+    )
+    .unwrap();
+
+    let add = run_tali(&["add", manifest.to_str().unwrap()], &data_dir, temp.path());
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let run = run_tali_allowing_update_check(
+        &["01", "--yes", "--no-update-check"],
+        &data_dir,
+        &project,
+        &[("TALI_UPDATE_CHECK_LATEST_VERSION", "9.9.9")],
+    );
+
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(!stdout.contains("Update available"));
+}
+
+#[test]
+fn failed_run_does_not_print_passive_update_notice() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let manifest = temp.path().join("fail-update.toml");
+    fs::write(
+        &manifest,
+        r#"
+version = 1
+name = "fail-update"
+
+[[steps]]
+type = "shell"
+cmd = "exit 7"
+"#,
+    )
+    .unwrap();
+
+    let add = run_tali(&["add", manifest.to_str().unwrap()], &data_dir, temp.path());
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let run = run_tali_allowing_update_check(
+        &["01", "--yes"],
+        &data_dir,
+        &project,
+        &[("TALI_UPDATE_CHECK_LATEST_VERSION", "9.9.9")],
+    );
+
+    assert!(!run.status.success());
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("Run failed."));
+    assert!(!stdout.contains("Update available"));
 }
 
 #[test]
