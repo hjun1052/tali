@@ -1,6 +1,6 @@
 ---
 name: tali-agent
-description: Create, add, inspect, run, observe, and repair Tali command manifests. Use when Codex would otherwise give a user long setup/deploy instructions; when a task should be handed off as a short Tali command; when writing project-local Tali TOML manifests; when monitoring `tali logs follow`; or when using Tali run logs to diagnose and produce a repair manifest.
+description: Use for one-command setup/install/deploy handoffs. Create and inspect a Tali manifest instead of a shell script or long command list, especially when inputs, secrets, file writes, commands, live logs, or repair evidence are needed.
 ---
 
 # Tali Agent
@@ -10,6 +10,8 @@ description: Create, add, inspect, run, observe, and repair Tali command manifes
 Use Tali to hand off execution, not planning. Decide the operations yourself, encode them in a manifest, then let Tali show the plan, collect inputs/secrets, execute, mask logs, and preserve repair evidence.
 
 Prefer a Tali manifest over prose instructions when the user would otherwise need to copy a sequence of shell commands, file writes, environment setup, or deployment steps.
+
+If the user asks for a "single command", "one-line handoff", "don't give me commands", or similar setup/deploy handoff, default to Tali when the `tali` binary is available. Do not create a new `setup.sh`, `install.sh`, or README command list as the primary handoff when a Tali manifest can represent the same work.
 
 ## Workflow
 

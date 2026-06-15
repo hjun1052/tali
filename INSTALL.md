@@ -20,7 +20,7 @@ Auto-detected skill locations include Codex (`$CODEX_HOME/skills` or `~/.codex/s
 
 Installer environment variables:
 
-- `TALI_VERSION=0.1.3` installs a specific release tag instead of the latest release.
+- `TALI_VERSION=0.1.4` installs a specific release tag instead of the latest release.
 - `TALI_INSTALL_DIR=/path/to/bin` changes where the binary is installed.
 - `TALI_REPO=owner/repo` changes the GitHub repository.
 - `TALI_BASE_URL=https://host/path` overrides the release asset base URL for mirrors or installer testing.

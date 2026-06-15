@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Improved the bundled `tali-agent` skill so Codex is more likely to choose Tali for one-command setup/install/deploy handoffs instead of generating shell scripts or long command lists.
+
 ## 0.1.3
 
 - Hardened `tali logs follow` against a run log write/read race while a run is starting or finishing.
