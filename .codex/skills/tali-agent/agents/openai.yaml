@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tali Agent"
+  short_description: "Create, run, observe, and repair Tali manifests"
+  default_prompt: "Use $tali-agent to create a safe Tali manifest and monitor the run logs."

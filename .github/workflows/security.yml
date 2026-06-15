@@ -1,0 +1,65 @@
+name: Security
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - .github/workflows/security.yml
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - .github/workflows/security.yml
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  license-policy:
+    name: License policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check licenses
+        run: python3 scripts/check-licenses.py
+
+  cargo-audit:
+    name: Cargo audit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit --locked
+          fi
+
+      - name: Audit dependencies
+        run: cargo audit

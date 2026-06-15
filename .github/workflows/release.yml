@@ -1,0 +1,252 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit --locked
+          fi
+
+      - name: Run release gate
+        env:
+          TALI_RELEASE_STRICT: "1"
+        run: scripts/release-check.sh
+
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux-x86_64
+            archive: tali-linux-x86_64.tar.gz
+            rust_host: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            name: macos-x86_64
+            archive: tali-macos-x86_64.tar.gz
+            rust_host: x86_64-apple-darwin
+          - os: macos-15
+            name: macos-arm64
+            archive: tali-macos-arm64.tar.gz
+            rust_host: aarch64-apple-darwin
+          - os: windows-2025
+            name: windows-x86_64
+            archive: tali-windows-x86_64.zip
+            rust_host: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check build host
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(rustc -vV | sed -n 's/^host: //p')"
+          expected="${{ matrix.rust_host }}"
+          if [ "$actual" != "$expected" ]; then
+            echo "Expected Rust host $expected, got $actual" >&2
+            exit 1
+          fi
+
+      - name: Check tag version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Cargo.toml version is $version, but tag is $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package/skills
+          cp target/release/tali dist/package/tali
+          cp README.md INSTALL.md RELEASE.md LICENSE SECURITY.md CHANGELOG.md dist/package/
+          cp scripts/install.sh scripts/install.ps1 dist/package/
+          cp -R .codex/skills/tali-agent dist/package/skills/tali-agent
+          mkdir -p dist/package/completions
+          target/release/tali completions bash > dist/package/completions/tali.bash
+          target/release/tali completions zsh > dist/package/completions/_tali
+          target/release/tali completions fish > dist/package/completions/tali.fish
+          target/release/tali completions powershell > dist/package/completions/tali.ps1
+          target/release/tali completions elvish > dist/package/completions/tali.elv
+          tar -czf "dist/${{ matrix.archive }}" -C dist/package .
+          (cd dist && shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256")
+
+      - name: Smoke archive Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/smoke
+          tar -xzf "dist/${{ matrix.archive }}" -C dist/smoke
+          dist/smoke/tali --version
+          TALI_DATA_DIR="${RUNNER_TEMP}/tali-self-test-${{ matrix.name }}" dist/smoke/tali self-test
+          test -s dist/smoke/README.md
+          test -s dist/smoke/INSTALL.md
+          test -s dist/smoke/RELEASE.md
+          test -s dist/smoke/LICENSE
+          test -s dist/smoke/SECURITY.md
+          test -s dist/smoke/CHANGELOG.md
+          test -s dist/smoke/install.sh
+          test -s dist/smoke/install.ps1
+          test -s dist/smoke/skills/tali-agent/SKILL.md
+          test -s dist/smoke/completions/tali.bash
+          test -s dist/smoke/completions/_tali
+          test -s dist/smoke/completions/tali.fish
+          test -s dist/smoke/completions/tali.ps1
+          test -s dist/smoke/completions/tali.elv
+          (cd dist && shasum -a 256 -c "${{ matrix.archive }}.sha256")
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/package | Out-Null
+          Copy-Item target/release/tali.exe dist/package/tali.exe
+          Copy-Item README.md dist/package/README.md
+          Copy-Item INSTALL.md dist/package/INSTALL.md
+          Copy-Item RELEASE.md dist/package/RELEASE.md
+          Copy-Item LICENSE dist/package/LICENSE
+          Copy-Item SECURITY.md dist/package/SECURITY.md
+          Copy-Item CHANGELOG.md dist/package/CHANGELOG.md
+          Copy-Item scripts/install.sh dist/package/install.sh
+          Copy-Item scripts/install.ps1 dist/package/install.ps1
+          New-Item -ItemType Directory -Force dist/package/skills | Out-Null
+          Copy-Item .codex/skills/tali-agent dist/package/skills/tali-agent -Recurse
+          New-Item -ItemType Directory -Force dist/package/completions | Out-Null
+          ./target/release/tali.exe completions bash | Out-File -Encoding utf8 dist/package/completions/tali.bash
+          ./target/release/tali.exe completions zsh | Out-File -Encoding utf8 dist/package/completions/_tali
+          ./target/release/tali.exe completions fish | Out-File -Encoding utf8 dist/package/completions/tali.fish
+          ./target/release/tali.exe completions powershell | Out-File -Encoding utf8 dist/package/completions/tali.ps1
+          ./target/release/tali.exe completions elvish | Out-File -Encoding utf8 dist/package/completions/tali.elv
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/${{ matrix.archive }}"
+          $hash = (Get-FileHash "dist/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "dist/${{ matrix.archive }}.sha256"
+
+      - name: Smoke archive Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/smoke | Out-Null
+          Expand-Archive -Path "dist/${{ matrix.archive }}" -DestinationPath dist/smoke
+          ./dist/smoke/tali.exe --version
+          $env:TALI_DATA_DIR = Join-Path $env:RUNNER_TEMP "tali-self-test-${{ matrix.name }}"
+          ./dist/smoke/tali.exe self-test
+          if (!(Test-Path dist/smoke/README.md)) { throw "missing README.md" }
+          if (!(Test-Path dist/smoke/INSTALL.md)) { throw "missing INSTALL.md" }
+          if (!(Test-Path dist/smoke/RELEASE.md)) { throw "missing RELEASE.md" }
+          if (!(Test-Path dist/smoke/LICENSE)) { throw "missing LICENSE" }
+          if (!(Test-Path dist/smoke/SECURITY.md)) { throw "missing SECURITY.md" }
+          if (!(Test-Path dist/smoke/CHANGELOG.md)) { throw "missing CHANGELOG.md" }
+          if (!(Test-Path dist/smoke/install.sh)) { throw "missing install.sh" }
+          if (!(Test-Path dist/smoke/install.ps1)) { throw "missing install.ps1" }
+          if (!(Test-Path dist/smoke/skills/tali-agent/SKILL.md)) { throw "missing tali-agent skill" }
+          if (!(Test-Path dist/smoke/completions/tali.bash)) { throw "missing bash completion" }
+          if (!(Test-Path dist/smoke/completions/_tali)) { throw "missing zsh completion" }
+          if (!(Test-Path dist/smoke/completions/tali.fish)) { throw "missing fish completion" }
+          if (!(Test-Path dist/smoke/completions/tali.ps1)) { throw "missing powershell completion" }
+          if (!(Test-Path dist/smoke/completions/tali.elv)) { throw "missing elvish completion" }
+          $expected = (Get-Content "dist/${{ matrix.archive }}.sha256").Split(" ")[0]
+          $actual = (Get-FileHash "dist/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "checksum mismatch" }
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/${{ matrix.archive }}
+            dist/${{ matrix.archive }}.sha256
+
+      - name: Attest package
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/${{ matrix.archive }}
+            dist/${{ matrix.archive }}.sha256
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Add installer assets
+        run: |
+          cp scripts/install.sh dist/install.sh
+          cp scripts/install.ps1 dist/install.ps1
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
