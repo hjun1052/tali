@@ -134,11 +134,11 @@ Before adding or running a manifest:
 For a global handoff:
 
 ```sh
-tali add /path/to/setup.toml
+tali add /path/to/setup.toml --json
 tali inspect 01
 ```
 
-Then tell the user:
+Parse the JSON `run` field. Then tell the user only:
 
 ```sh
 tali 01

@@ -23,6 +23,7 @@ cargo build --release --locked
 cp target/release/tali "$package_dir/tali"
 cp README.md INSTALL.md RELEASE.md LICENSE SECURITY.md CHANGELOG.md "$package_dir/"
 cp scripts/install.sh scripts/install.ps1 "$package_dir/"
+cp scripts/install.sh scripts/install.ps1 "$dist_dir/"
 cp -R .codex/skills/tali-agent "$package_dir/skills/tali-agent"
 
 target/release/tali completions bash > "$package_dir/completions/tali.bash"

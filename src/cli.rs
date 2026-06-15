@@ -2,13 +2,16 @@ use crate::doctor;
 use crate::logs;
 use crate::runner::{self, RunnerOptions};
 use crate::self_test;
+use crate::skill;
 use crate::store::Store;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Command, CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use std::collections::HashMap;
 use std::env;
 use std::io;
+use std::path::PathBuf;
+use std::process::Stdio;
 
 #[derive(Debug, Parser)]
 #[command(name = "tali", version, about = "AI-friendly command manifest runner")]
@@ -23,6 +26,9 @@ enum Commands {
     Add {
         /// Path to a manifest TOML file.
         path: String,
+        /// Print machine-readable JSON for agents.
+        #[arg(long)]
+        json: bool,
     },
     /// List global manifests.
     List,
@@ -76,6 +82,29 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Update Tali by re-running the GitHub Release installer.
+    Update {
+        /// Install a specific version such as 0.1.1 or v0.1.1.
+        #[arg(long)]
+        version: Option<String>,
+        /// GitHub repository to install from, as owner/repo.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Override the release asset base URL.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Directory where the binary should be installed.
+        #[arg(long)]
+        install_dir: Option<PathBuf>,
+        /// Skip agent skill installation during update.
+        #[arg(long)]
+        no_skill: bool,
+    },
+    /// Manage bundled agent skills.
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
     /// Generate shell completion scripts.
     Completions {
         /// Shell to generate completions for.
@@ -84,19 +113,47 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum SkillCommands {
+    /// Install the bundled tali-agent skill into a skill directory.
+    Install {
+        /// Directory that contains skill folders.
+        directory: PathBuf,
+        /// Do not replace an existing tali-agent skill.
+        #[arg(long = "no-overwrite", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        overwrite: bool,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse_from(rewrite_shortcut_args(env::args().collect()));
     let cwd = env::current_dir()?;
 
     match cli.command {
-        Commands::Add { path } => {
+        Commands::Add { path, json } => {
             let store = Store::new()?;
             let entry = store.add_manifest(path.as_ref())?;
-            println!("Added manifest:");
-            println!("ID: {}", entry.id);
-            println!("Name: {}", entry.name);
-            println!("Run:");
-            println!("tali {}", entry.id);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "id": entry.id,
+                        "name": entry.name,
+                        "description": entry.description,
+                        "created_at": entry.created_at,
+                        "run": format!("tali {}", entry.id),
+                    }))?
+                );
+            } else {
+                println!("Added manifest:");
+                println!("ID: {}", entry.id);
+                println!("Name: {}", entry.name);
+                println!("Run:");
+                println!("tali {}", entry.id);
+            }
         }
         Commands::List => {
             let store = Store::new()?;
@@ -204,6 +261,39 @@ pub fn run() -> Result<()> {
                 std::process::exit(1);
             }
         }
+        Commands::Update {
+            version,
+            repo,
+            base_url,
+            install_dir,
+            no_skill,
+        } => run_update(version, repo, base_url, install_dir, no_skill)?,
+        Commands::Skill { command } => match command {
+            SkillCommands::Install {
+                directory,
+                overwrite,
+                json,
+            } => {
+                let result = skill::install_tali_agent_skill(&directory, overwrite)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "skill": "tali-agent",
+                            "path": result.path,
+                            "backup_path": result.backup_path,
+                        }))?
+                    );
+                } else {
+                    if let Some(backup) = result.backup_path {
+                        println!("Backed up existing tali-agent skill to:");
+                        println!("{}", backup.display());
+                    }
+                    println!("Installed tali-agent skill to:");
+                    println!("{}", result.path.display());
+                }
+            }
+        },
         Commands::Completions { shell } => {
             let mut command = command();
             generate(shell, &mut command, "tali", &mut io::stdout());
@@ -273,6 +363,8 @@ fn rewrite_shortcut_args(args: Vec<String>) -> Vec<String> {
         "logs",
         "doctor",
         "self-test",
+        "update",
+        "skill",
         "completions",
         "help",
         "--help",
@@ -289,4 +381,113 @@ fn rewrite_shortcut_args(args: Vec<String>) -> Vec<String> {
     } else {
         args
     }
+}
+
+fn run_update(
+    version: Option<String>,
+    repo: Option<String>,
+    base_url: Option<String>,
+    install_dir: Option<PathBuf>,
+    no_skill: bool,
+) -> Result<()> {
+    let install_dir = install_dir
+        .or_else(current_binary_install_dir)
+        .context("could not determine install directory; pass --install-dir")?;
+
+    if cfg!(windows) {
+        let installer = if let Some(base_url) = &base_url {
+            format!("{base_url}/install.ps1")
+        } else {
+            format!(
+                "https://github.com/{}/releases/latest/download/install.ps1",
+                repo.as_deref().unwrap_or("hjun1052/tali")
+            )
+        };
+        let command = "irm $env:TALI_UPDATE_INSTALLER | iex";
+        let mut process = std::process::Command::new("powershell");
+        process.args(["-NoProfile", "-Command", command]);
+        process.env("TALI_UPDATE_INSTALLER", installer);
+        configure_update_env(
+            &mut process,
+            version,
+            repo,
+            base_url,
+            &install_dir,
+            no_skill,
+        );
+        let status = process
+            .stdin(Stdio::null())
+            .status()
+            .context("failed to run PowerShell installer")?;
+        if !status.success() {
+            bail!("update installer failed with status {status}");
+        }
+    } else {
+        let installer = if let Some(base_url) = &base_url {
+            format!("{base_url}/install.sh")
+        } else {
+            format!(
+                "https://github.com/{}/releases/latest/download/install.sh",
+                repo.as_deref().unwrap_or("hjun1052/tali")
+            )
+        };
+        let command = concat!(
+            "if command -v curl >/dev/null 2>&1; then ",
+            "curl -fsSL \"$TALI_UPDATE_INSTALLER\" | sh; ",
+            "elif command -v wget >/dev/null 2>&1; then ",
+            "wget -qO- \"$TALI_UPDATE_INSTALLER\" | sh; ",
+            "else ",
+            "echo 'tali update requires curl or wget' >&2; exit 1; ",
+            "fi"
+        );
+        let mut process = std::process::Command::new("sh");
+        process.args(["-c", command]);
+        process.env("TALI_UPDATE_INSTALLER", installer);
+        configure_update_env(
+            &mut process,
+            version,
+            repo,
+            base_url,
+            &install_dir,
+            no_skill,
+        );
+        let status = process
+            .stdin(Stdio::null())
+            .status()
+            .context("failed to run shell installer")?;
+        if !status.success() {
+            bail!("update installer failed with status {status}");
+        }
+    }
+
+    Ok(())
+}
+
+fn configure_update_env(
+    process: &mut std::process::Command,
+    version: Option<String>,
+    repo: Option<String>,
+    base_url: Option<String>,
+    install_dir: &std::path::Path,
+    no_skill: bool,
+) {
+    process.env("TALI_INSTALL_DIR", install_dir);
+    if let Some(version) = version {
+        process.env("TALI_VERSION", version);
+    }
+    if let Some(repo) = repo {
+        process.env("TALI_REPO", repo);
+    }
+    if let Some(base_url) = base_url {
+        process.env("TALI_BASE_URL", base_url);
+    }
+    if no_skill {
+        process.env("TALI_INSTALL_SKILL", "0");
+    }
+}
+
+fn current_binary_install_dir() -> Option<PathBuf> {
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
 }

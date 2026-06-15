@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Added `tali update` for installer-based self updates.
+- Added `tali skill install <dir>` for explicit `$tali-agent` skill installation.
+- Added `tali add --json` so agents can register manifests and show users only `tali <id>`.
+- Refreshed the README around the user problem, quick demo, agent workflow, and release install path.
+- Bundled the `$tali-agent` skill into the binary for direct skill installation.
+
 ## 0.1.0
 
 Initial MVP release.

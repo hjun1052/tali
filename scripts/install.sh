@@ -196,8 +196,10 @@ if [ -z "$binary" ]; then
 fi
 
 mkdir -p "$install_dir"
-cp "$binary" "$install_dir/tali"
-chmod 0755 "$install_dir/tali"
+install_tmp="$install_dir/.tali.tmp.$$"
+cp "$binary" "$install_tmp"
+chmod 0755 "$install_tmp"
+mv "$install_tmp" "$install_dir/tali"
 
 echo "Installed tali to $install_dir/tali"
 "$install_dir/tali" --version

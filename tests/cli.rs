@@ -126,6 +126,71 @@ cmd = "echo {{token}}"
 }
 
 #[test]
+fn add_json_returns_agent_friendly_run_command() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let manifest = temp.path().join("setup.toml");
+    fs::write(
+        &manifest,
+        r#"
+version = 1
+name = "agent-added"
+
+[[steps]]
+type = "mkdir"
+path = "config"
+"#,
+    )
+    .unwrap();
+
+    let add = run_tali(
+        &["add", manifest.to_str().unwrap(), "--json"],
+        &data_dir,
+        temp.path(),
+    );
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add_json: Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(add_json["id"], "01");
+    assert_eq!(add_json["name"], "agent-added");
+    assert_eq!(add_json["run"], "tali 01");
+}
+
+#[test]
+fn skill_install_writes_bundled_tali_agent_skill() {
+    let temp = tempdir().unwrap();
+    let data_dir = temp.path().join("store");
+    let skills_dir = temp.path().join("skills");
+
+    let install = run_tali(
+        &["skill", "install", skills_dir.to_str().unwrap(), "--json"],
+        &data_dir,
+        temp.path(),
+    );
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let install_json: Value = serde_json::from_slice(&install.stdout).unwrap();
+    assert_eq!(install_json["skill"], "tali-agent");
+    assert!(skills_dir.join("tali-agent").join("SKILL.md").exists());
+    assert!(skills_dir
+        .join("tali-agent")
+        .join("references")
+        .join("manifest-authoring.md")
+        .exists());
+    assert!(
+        fs::read_to_string(skills_dir.join("tali-agent").join("SKILL.md"))
+            .unwrap()
+            .contains("Tali Agent")
+    );
+}
+
+#[test]
 fn project_manifest_resolves_from_nested_directory() {
     let temp = tempdir().unwrap();
     let data_dir = temp.path().join("store");

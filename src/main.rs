@@ -8,6 +8,7 @@ mod manifest;
 mod runner;
 mod safety;
 mod self_test;
+mod skill;
 mod store;
 
 fn main() {

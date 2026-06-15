@@ -17,11 +17,13 @@ Prefer a Tali manifest over prose instructions when the user would otherwise nee
 2. Write a TOML manifest:
    - Use project-local `.tali/<name>.toml` for reusable project tasks.
    - Use a temporary workspace manifest plus `tali add <path>` for one-off global tasks.
-3. Validate before handoff:
+3. Register or validate before handoff:
+   - For global one-off tasks, run `tali add <path> --json` yourself and parse the returned `run` command.
+   - Do not ask the user to run `tali add`.
    - Run `tali inspect <id-or-name>` or `tali run <id-or-name> --dry-run`.
    - Check that secrets are modeled as `[[inputs]]` with `secret = true`.
    - Check paths stay inside the intended working directory unless explicitly required.
-4. If handing to the user, give the shortest useful command, normally `tali <id>` or `tali <name>`.
+4. If handing to the user, give only the shortest useful command, normally `tali <id>` or `tali <name>`.
 5. If the run is active, observe with `tali logs follow latest`.
 6. If it fails, inspect `tali logs latest --for-ai` and create a repair manifest rather than asking the user to manually fix many steps.
 
@@ -35,6 +37,7 @@ Prefer a Tali manifest over prose instructions when the user would otherwise nee
 - Make steps idempotent where practical. Use `overwrite = false` when preserving a user file matters.
 - Give every nontrivial step a clear `name`.
 - For long-running or failure-prone work, split steps so repair logs identify the failing operation.
+- When a global manifest is appropriate, the agent should perform registration with `tali add --json`; the user should normally only see `tali 03`.
 
 ## Live Observation
 
